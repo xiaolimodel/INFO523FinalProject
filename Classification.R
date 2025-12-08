@@ -1,10 +1,10 @@
 # Load necessary libraries
 # -------------------------------------------------------------------------
 # Check for missing packages and install them automatically
-required_packages <- c("caret", "e1071", "rpart", "randomForest", "xgboost", "dplyr", "fastshap")
+# Added 'pROC' for ROC/AUC calculations
+required_packages <- c("caret", "e1071", "rpart", "randomForest", "xgboost", "dplyr", "fastshap", "ggplot2", "pROC")
 new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) install.packages(new_packages)
-
 # Load libraries
 library(caret)
 library(e1071)
@@ -12,8 +12,9 @@ library(rpart)
 library(randomForest)
 library(xgboost)
 library(dplyr)
-library(fastshap) 
-
+library(fastshap)
+library(ggplot2)
+library(pROC)
 # ==========================================
 # 1. Data Loading and Preprocessing
 # ==========================================
@@ -87,7 +88,7 @@ apply_threshold <- function(probabilities, target_prop) {
   return(factor(preds, levels = c("0", "1")))
 }
 
-# Container for results
+# Container for results (Added AUC)
 results <- data.frame(
   Model = character(), 
   Accuracy = numeric(), 
@@ -95,11 +96,17 @@ results <- data.frame(
   Specificity = numeric(), 
   Precision = numeric(), 
   F1_Score = numeric(),
+  AUC = numeric(), # Added AUC
   stringsAsFactors = FALSE
 )
 
+# Storage for ROC plotting data
+all_roc_data <- data.frame()
+
 # Helper function to extract metrics and add to results
-add_results <- function(model_name, cm, current_results) {
+# Now includes AUC and ROC processing
+add_results <- function(model_name, cm, current_results, roc_obj) {
+  # Add metrics to results table
   new_row <- data.frame(
     Model = model_name,
     Accuracy = as.numeric(cm$overall['Accuracy']),
@@ -107,9 +114,22 @@ add_results <- function(model_name, cm, current_results) {
     Specificity = as.numeric(cm$byClass['Specificity']),
     Precision = as.numeric(cm$byClass['Pos Pred Value']),
     F1_Score = as.numeric(cm$byClass['F1']),
+    AUC = as.numeric(auc(roc_obj)),
     stringsAsFactors = FALSE
   )
+  
+  # Return updated results
   return(rbind(current_results, new_row))
+}
+
+# Helper to add ROC plotting data
+add_roc_plot_data <- function(model_name, roc_obj, current_plot_data) {
+  roc_df <- data.frame(
+    Sensitivity = roc_obj$sensitivities,
+    Specificity = roc_obj$specificities,
+    Model = model_name
+  )
+  return(rbind(current_plot_data, roc_df))
 }
 
 # ==========================================
@@ -120,9 +140,29 @@ probit_model <- glm(Target ~ ., data = train_data, family = binomial(link = "pro
 prob_probit <- predict(probit_model, newdata = test_data, type = "response")
 pred_probit <- apply_threshold(prob_probit, prop_positive)
 
+# Compute ROC/AUC
+roc_probit <- roc(test_data$Target, prob_probit, levels = c("0", "1"), direction = "<")
 cm_probit <- confusionMatrix(pred_probit, test_data$Target, positive = "1")
 print(cm_probit) 
-results <- add_results("Probit", cm_probit, results)
+
+results <- add_results("Probit", cm_probit, results, roc_probit)
+all_roc_data <- add_roc_plot_data("Probit", roc_probit, all_roc_data)
+
+# ==========================================
+# 2.5 Naive Bayes
+# ==========================================
+cat("\n--- Naive Bayes (Test Set) ---\n")
+nb_model <- naiveBayes(Target ~ ., data = train_data)
+# type="raw" returns probabilities for each class
+prob_nb <- predict(nb_model, newdata = test_data, type = "raw")[, "1"]
+pred_nb <- apply_threshold(prob_nb, prop_positive)
+
+roc_nb <- roc(test_data$Target, prob_nb, levels = c("0", "1"), direction = "<")
+cm_nb <- confusionMatrix(pred_nb, test_data$Target, positive = "1")
+print(cm_nb)
+
+results <- add_results("Naive Bayes", cm_nb, results, roc_nb)
+all_roc_data <- add_roc_plot_data("Naive Bayes", roc_nb, all_roc_data)
 
 # ==========================================
 # 3. Support Vector Machine (SVM)
@@ -133,9 +173,12 @@ svm_pred_obj <- predict(svm_model, newdata = test_data, probability = TRUE)
 prob_svm <- attr(svm_pred_obj, "probabilities")[, "1"]
 pred_svm <- apply_threshold(prob_svm, prop_positive)
 
+roc_svm <- roc(test_data$Target, prob_svm, levels = c("0", "1"), direction = "<")
 cm_svm <- confusionMatrix(pred_svm, test_data$Target, positive = "1")
 print(cm_svm)
-results <- add_results("SVM", cm_svm, results)
+
+results <- add_results("SVM", cm_svm, results, roc_svm)
+all_roc_data <- add_roc_plot_data("SVM", roc_svm, all_roc_data)
 
 # ==========================================
 # 4. Decision Tree
@@ -145,9 +188,12 @@ tree_model <- rpart(Target ~ ., data = train_data, method = "class")
 prob_tree <- predict(tree_model, newdata = test_data, type = "prob")[, 2]
 pred_tree <- apply_threshold(prob_tree, prop_positive)
 
+roc_tree <- roc(test_data$Target, prob_tree, levels = c("0", "1"), direction = "<")
 cm_tree <- confusionMatrix(pred_tree, test_data$Target, positive = "1")
 print(cm_tree)
-results <- add_results("Decision Tree", cm_tree, results)
+
+results <- add_results("Decision Tree", cm_tree, results, roc_tree)
+all_roc_data <- add_roc_plot_data("Decision Tree", roc_tree, all_roc_data)
 
 # ==========================================
 # 5. Random Forest
@@ -157,16 +203,18 @@ rf_model <- randomForest(Target ~ ., data = train_data, ntree = 100)
 prob_rf <- predict(rf_model, newdata = test_data, type = "prob")[, 2]
 pred_rf <- apply_threshold(prob_rf, prop_positive)
 
+roc_rf <- roc(test_data$Target, prob_rf, levels = c("0", "1"), direction = "<")
 cm_rf <- confusionMatrix(pred_rf, test_data$Target, positive = "1")
 print(cm_rf)
-results <- add_results("Random Forest", cm_rf, results)
+
+results <- add_results("Random Forest", cm_rf, results, roc_rf)
+all_roc_data <- add_roc_plot_data("Random Forest", roc_rf, all_roc_data)
 
 # ==========================================
 # 6. XGBoost
 # ==========================================
 cat("\n--- XGBoost (Test Set) ---\n")
 # Prepare matrices
-# Since NAICS2 is now a factor, dummyVars will automatically one-hot encode it
 dummies <- dummyVars(" ~ .", data = model_data %>% select(-Target))
 d_x <- predict(dummies, newdata = model_data)
 train_x <- d_x[trainIndex, ]
@@ -184,9 +232,12 @@ xgb_model <- xgb.train(params = params, data = dtrain, nrounds = 100, verbose = 
 prob_xgb <- predict(xgb_model, dtest)
 pred_xgb <- apply_threshold(prob_xgb, prop_positive)
 
+roc_xgb <- roc(test_data$Target, prob_xgb, levels = c("0", "1"), direction = "<")
 cm_xgb <- confusionMatrix(pred_xgb, as.factor(test_y), positive = "1")
 print(cm_xgb)
-results <- add_results("XGBoost", cm_xgb, results)
+
+results <- add_results("XGBoost", cm_xgb, results, roc_xgb)
+all_roc_data <- add_roc_plot_data("XGBoost", roc_xgb, all_roc_data)
 
 # ==========================================
 # 7. Final Comprehensive Comparison
@@ -203,6 +254,25 @@ print(results_formatted)
 
 best_model <- results[1, 1]
 cat(paste0("\nThe best performing classification method is: ", best_model, "\n"))
+
+# ==========================================
+# 7.5 ROC Curve Plot
+# ==========================================
+cat("\n=================================================================================\n")
+cat("Generating Combined ROC Curve Plot\n")
+cat("=================================================================================\n")
+
+p_roc <- ggplot(all_roc_data, aes(x = 1 - Specificity, y = Sensitivity, color = Model)) +
+  geom_path(linewidth = 0.8) +
+  geom_abline(linetype = "dashed", color = "gray") +
+  coord_fixed() +
+  labs(title = "ROC Curves for All Classification Models",
+       x = "1 - Specificity (False Positive Rate)",
+       y = "Sensitivity (True Positive Rate)") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+print(p_roc)
 
 # ==========================================
 # 8. SHAP Score Analysis (Variable Importance)
@@ -230,7 +300,19 @@ imp_probit <- data.frame(Variable = colnames(X_shap),
 cat("\n--- Probit Variable Importance (Mean |SHAP| Score) ---\n")
 print(head(imp_probit, 10))
 
-# --- 2. SVM SHAP ---
+# --- 2. Naive Bayes SHAP ---
+pfun_nb <- function(object, newdata) {
+  predict(object, newdata = newdata, type = "raw")[, "1"]
+}
+shap_nb <- explain(nb_model, X = X_shap, pred_wrapper = pfun_nb, nsim = 10)
+imp_nb <- data.frame(Variable = colnames(X_shap), 
+                     Importance = colMeans(abs(shap_nb))) %>%
+  arrange(desc(Importance))
+
+cat("\n--- Naive Bayes Variable Importance (Mean |SHAP| Score) ---\n")
+print(head(imp_nb, 10))
+
+# --- 3. SVM SHAP ---
 pfun_svm <- function(object, newdata) {
   attr(predict(object, newdata = newdata, probability = TRUE), "probabilities")[, "1"]
 }
@@ -242,7 +324,7 @@ imp_svm <- data.frame(Variable = colnames(X_shap),
 cat("\n--- SVM Variable Importance (Mean |SHAP| Score) ---\n")
 print(head(imp_svm, 10))
 
-# --- 3. Decision Tree SHAP ---
+# --- 4. Decision Tree SHAP ---
 pfun_tree <- function(object, newdata) {
   predict(object, newdata = newdata, type = "prob")[, 2]
 }
@@ -254,7 +336,7 @@ imp_tree <- data.frame(Variable = colnames(X_shap),
 cat("\n--- Decision Tree Variable Importance (Mean |SHAP| Score) ---\n")
 print(head(imp_tree, 10))
 
-# --- 4. Random Forest SHAP ---
+# --- 5. Random Forest SHAP ---
 pfun_rf <- function(object, newdata) {
   predict(object, newdata = newdata, type = "prob")[, 2]
 }
@@ -266,7 +348,7 @@ imp_rf <- data.frame(Variable = colnames(X_shap),
 cat("\n--- Random Forest Variable Importance (Mean |SHAP| Score) ---\n")
 print(head(imp_rf, 10))
 
-# --- 5. XGBoost SHAP ---
+# --- 6. XGBoost SHAP ---
 pfun_xgb <- function(object, newdata) {
   matrix_data <- predict(dummies, newdata = newdata)
   dmatrix <- xgb.DMatrix(data = matrix_data)
