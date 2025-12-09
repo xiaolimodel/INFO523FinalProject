@@ -36,8 +36,7 @@ data$Target <- as.factor(data$Target) # Convert to factor for classification
 # This ensures it is treated as a category in trees/RF and dummy-encoded for XGBoost
 data$NAICS2 <- as.factor(data$NAICS2)
 
-# Remove rows with NAs (before selecting columns to ensure row consistency)
-data <- na.omit(data)
+
 
 # --- STRICT VARIABLE SELECTION ---
 # Only selecting variables requested by user
