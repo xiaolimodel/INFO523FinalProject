@@ -81,23 +81,15 @@ library(arulesViz)
 # This plot shows Confidence vs. Support, with Lift encoded by color.
 # It's the most common and useful visualization for identifying strong rules.
 cat("\nGenerating Scatter Plot...\n")
-plot(rules_apriori, 
+plot(rules, 
      main = "Apriori Association Rules: Confidence vs. Support (Lift Color)", 
      engine = "htmlwidget") # Use htmlwidget engine for interactive viewing
 
-# Step 2b: Grouped Matrix Plot
-# This plot groups rules by similar items and is useful for seeing item patterns.
-cat("\nGenerating Grouped Matrix Plot...\n")
-plot(rules_apriori, 
-     method = "grouped", 
-     main = "Grouped Matrix Plot of Association Rules",
-     engine = "htmlwidget")
-
-# Step 2c: Network Graph Plot (Best for small rule sets)
+# Step 2b: Network Graph Plot (Best for small rule sets)
 # The graph shows items as nodes and rules as arrows. 
 # We restrict the number of rules to 10 for readability, as graphs get cluttered easily.
 cat("\nGenerating Network Graph Plot (Top 10 Rules)...\n")
-plot(rules_apriori, 
+plot(rules, 
      method = "graph", 
      limit = 10, # Limits plot to the first 10 rules
      control = list(type = "items"),
