@@ -58,6 +58,7 @@ txns <- as(train,"transactions")
 
 rules = rCBA::fpgrowth(txns, support=0.01, confidence=0.03, maxLength=2, consequent="WorkFromHome",
                        parallel=FALSE)
+rules <- rules[size(lhs(rules)) > 0]
 sort_order <- order(quality(rules)$lift, decreasing = TRUE)
 rules_sorted <- rules[sort_order]
 # --- 7. Inspect the Results ---
@@ -68,9 +69,10 @@ predictions <- rCBA::classification(test,rules)
 table(predictions)
 sum(as.character(test$WorkFromHome)==as.character(predictions),na.rm=TRUE)/length(predictions)
 
-prunedRules <- rCBA::pruning(train, rules, method="m2cba", parallel=FALSE)
+prunedRules <- rCBA::pruning(train, rules, method="m1cba", parallel=FALSE)
 predictions <- rCBA::classification(test, prunedRules)
 table(predictions)
 sum(as.character(test$WorkFromHome)==as.character(predictions),na.rm=TRUE)/length(predictions)
-
+prunedRules <- prunedRules[size(lhs(prunedRules)) > 0]
 inspect(prunedRules)
+inspect(head(prunedRules, 6))
